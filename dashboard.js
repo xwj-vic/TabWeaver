@@ -102,13 +102,15 @@ async function performDeepSynthesis(item, modalBody) {
 
         console.log("Extracted graph:", graphDef ? "Found" : "None");
 
-        // 清理 Mermaid 代码中的特殊字符（中文括号等）
+        // 清理 Mermaid 代码中的非法字符
         if (graphDef) {
             graphDef = graphDef
                 .replace(/（/g, '(').replace(/）/g, ')')  // 中文括号
                 .replace(/【/g, '[').replace(/】/g, ']')  // 中文方括号
                 .replace(/：/g, ':').replace(/；/g, ';')  // 中文冒号分号
-                .replace(/，/g, ',');                      // 中文逗号
+                .replace(/，/g, ',')                       // 中文逗号
+                .replace(/-{3,}/g, '--')                   // 解决 AI 生成长横线导致的语法错误
+                .replace(/^\s*--+.*$/gm, '')               // 移除纯线条行
         }
 
         // 清理文本：移除图表代码，用占位符替换
