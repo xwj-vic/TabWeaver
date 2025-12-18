@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowTab - 智能标签页看板</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --text-color: #f8fafc;
+            --accent-color: #38bdf8;
+            --card-bg: #1e293b;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        header {
+            width: 100%;
+            max-width: 1200px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 3rem;
+        }
+
+        h1 {
+            font-size: 2.8rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin: 0;
+            letter-spacing: -0.025em;
+        }
+
+        #a2ui-container {
+            width: 100%;
+            max-width: 1200px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .loading {
+            font-size: 1.2rem;
+            color: var(--accent-color);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* 弹窗样式 */
+        #modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #modal-content {
+            background: var(--card-bg);
+            width: 90%;
+            max-width: 800px;
+            max-height: 80vh;
+            border-radius: 1.5rem;
+            border: 1px solid #334155;
+            padding: 2rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            overflow-y: auto;
+            position: relative;
+        }
+
+        .close-modal {
+            position: absolute;
+            top: 1.5rem;
+            right: 1.5rem;
+            background: none;
+            border: none;
+            color: #64748b;
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        .tab-item {
+            display: flex;
+            align-items: center;
+            padding: 0.8rem;
+            background: rgba(15, 23, 42, 0.3);
+            border-radius: 0.8rem;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            transition: background 0.2s;
+            border: 1px solid transparent;
+        }
+
+        .tab-item:hover {
+            background: rgba(56, 189, 248, 0.1);
+            border-color: rgba(56, 189, 248, 0.3);
+        }
+
+        .tab-icon {
+            width: 16px;
+            height: 16px;
+            margin-right: 10px;
+        }
+
+        .tab-title {
+            font-size: 0.9rem;
+            color: #cbd5e1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>FlowTab</h1>
+        <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-end;">
+            <div id="api-config"
+                style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; background: #1e293b; padding: 0.8rem; border-radius: 0.8rem; border: 1px solid #334155;">
+                <input type="text" id="api-endpoint" placeholder="API 端点 (OpenAI 兼容)"
+                    style="background: #0f172a; border: 1px solid #334155; color: white; border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; width: 280px;">
+                <input type="text" id="api-model" placeholder="模型名"
+                    style="background: #0f172a; border: 1px solid #334155; color: white; border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; width: 200px;">
+                <input type="password" id="api-key" placeholder="API Key"
+                    style="background: #0f172a; border: 1px solid #334155; color: white; border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; width: 150px;">
+            </div>
+            <div style="display: flex; gap: 1rem; align-items: center;">
+                <button id="refresh-btn" style="
+                    background: var(--accent-color);
+                    color: var(--bg-color);
+                    border: none;
+                    padding: 0.5rem 1.5rem;
+                    border-radius: 0.5rem;
+                    cursor: pointer;
+                    font-weight: bold;
+                    transition: filter 0.2s;
+                ">扫描全部</button>
+                <button id="custom-select-btn" style="
+                    background: transparent;
+                    color: var(--accent-color);
+                    border: 1px solid var(--accent-color);
+                    padding: 0.5rem 1.2rem;
+                    border-radius: 0.5rem;
+                    cursor: pointer;
+                    font-weight: bold;
+                    transition: all 0.2s;
+                ">自定义选择</button>
+                <div id="status-bar" style="font-size: 0.9rem; color: #94a3b8;">准备就绪</div>
+            </div>
+        </div>
+    </header>
+
+    <div id="a2ui-container">
+        <div class="loading">AI 正在扫描您的标签页...</div>
+    </div>
+
+    <!-- 标签页选择弹窗 -->
+    <div id="tab-select-overlay"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(8px); z-index: 1000; justify-content: center; align-items: center;">
+        <div
+            style="background: var(--card-bg); width: 90%; max-width: 700px; max-height: 80vh; border-radius: 1.5rem; border: 1px solid #334155; padding: 2rem; overflow-y: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2 style="color: #f8fafc; margin: 0;">选择要合成的标签页</h2>
+                <button id="close-tab-select"
+                    style="background: none; border: none; color: #64748b; font-size: 1.5rem; cursor: pointer;">&times;</button>
+            </div>
+            <div id="tab-list-container"
+                style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1.5rem;">
+                <!-- 动态填充 -->
+            </div>
+            <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+                <button id="select-all-btn"
+                    style="background: transparent; color: #94a3b8; border: 1px solid #334155; padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer;">全选</button>
+                <button id="start-custom-synthesis-btn"
+                    style="background: var(--accent-color); color: var(--bg-color); border: none; padding: 0.5rem 1.5rem; border-radius: 0.5rem; cursor: pointer; font-weight: bold;">开始合成</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 详情弹窗 -->
+    <div id="modal-overlay">
+        <div id="modal-content">
+            <button class="close-modal">&times;</button>
+            <div id="modal-body">
+                <!-- 内容动态注入 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Mermaid.js (本地) -->
+    <script src="libs/mermaid.min.js"></script>
+    <script src="libs/mermaid-init.js"></script>
+    <script src="dashboard.js"></script>
+</body>
+
+</html>

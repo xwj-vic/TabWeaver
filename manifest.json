@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "FlowTab",
+  "version": "0.1.0",
+  "description": "基于 LLM 和 A2UI 的智能标签页整合看板",
+  "permissions": [
+    "tabs",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "action": {
+    "default_title": "打开 FlowTab 看板"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}
