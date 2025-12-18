@@ -60,9 +60,16 @@ async function initDashboard() {
 async function performRapidClustering(data, config) {
     try {
         const prompt = `你是一个分类助手。请将以下网页按主题分类。
-                      输出 JSON 格式：{ "groups": [ { "title": "主题名", "ids": [索引数字] } ] }。只输出 JSON。
-                      网页列表：\n` +
-            data.map((d, i) => `[${i}] ${d.title}`).join('\n');
+
+分类要求：
+1. 根据内容相似性分组，不要仅依赖标题
+2. 每个分组取一个能概括主题的标题
+3. 如果某个页面与其他都不相关，可以单独成组
+
+输出 JSON 格式：{ "groups": [ { "title": "主题名", "ids": [索引数字] } ] }。只输出 JSON。
+
+网页列表：
+` + data.map((d, i) => `[${i}] 标题：${d.title}\n    摘要：${d.shortContent || '无'}`).join('\n\n');
 
         const result = await callAIChat(prompt, config);
         const json = parseAIResponse(result);
@@ -76,16 +83,28 @@ async function performDeepSynthesis(item, modalBody) {
 
     try {
         const prompt = `你是一个知识整合专家。请根据以下网页内容进行深度整合。
-                      
-                      输出结构：
-                      1. **页面总结**：每行一个总结。
-                      2. **关系图**：使用 \`\`\`mermaid 代码块，可以是 graph TD、mindmap 或 flowchart。
-                      3. **深度对比**：分析关联与异同点。
 
-                      重要：Mermaid 代码必须严格包裹在 \`\`\`mermaid 和 \`\`\` 之间。
-                      
-                      内容：\n` +
-            item.tabs.map(t => `---\n标题：${t.title}\n内容：${t.content}`).join('\n\n');
+输出结构：
+
+## 1. 页面总结
+对每个页面分别总结，格式：
+**[页面标题]**
+- 核心观点：（页面要表达的主要论点或目的）
+- 关键信息：（重要数据、事实、引用）
+- 主要结论：（页面的结论或建议）
+
+## 2. 关系图
+使用 \`\`\`mermaid 代码块，绘制页面间的概念关系（可以是 graph TD、mindmap 或 flowchart）。
+
+## 3. 深度对比
+- 相同点：各页面的共识
+- 差异点：各页面的不同观点或侧重
+- 综合洞见：整合后的核心结论
+
+重要：Mermaid 代码必须严格包裹在 \`\`\`mermaid 和 \`\`\` 之间。
+
+内容：
+` + item.tabs.map(t => `---\n【${t.title}】\n${t.content}`).join('\n\n');
 
         const result = await callAIChat(prompt, apiConfig);
         console.log("AI Result:", result);
@@ -111,6 +130,10 @@ async function performDeepSynthesis(item, modalBody) {
                 .replace(/，/g, ',')                       // 中文逗号
                 .replace(/-{3,}/g, '--')                   // 解决 AI 生成长横线导致的语法错误
                 .replace(/^\s*--+.*$/gm, '')               // 移除纯线条行
+                .replace(/<br\s*\/?>/gi, ' ')              // 移除 <br/> 标签
+                .replace(/&[a-z]+;/gi, ' ')                // 移除 HTML 实体
+                .replace(/\.\.\./g, '')                    // 移除省略号
+                .replace(/subgraph\s+"[^"]*"\s*\n\s*\w+\s*\n\s*end/gm, '') // 移除只有单个节点的 subgraph
         }
 
         // 清理文本：移除图表代码，用占位符替换
