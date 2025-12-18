@@ -6,6 +6,15 @@
 let currentExtractedData = [];
 let apiConfig = {};
 
+// 默认图标 - 内联SVG，确保永不失效
+const DEFAULT_ICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2394a3b8'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z'/%3E%3C/svg%3E";
+
+// 安全设置图标：处理 favicon 加载失败
+function getSafeIconHtml(iconUrl, className = 'tab-icon') {
+    const src = iconUrl || DEFAULT_ICON;
+    return `<img class="${className}" src="${src}" onerror="this.onerror=null;this.src='${DEFAULT_ICON}'">`;
+}
+
 async function initDashboard() {
     const statusBar = document.getElementById('status-bar');
     const container = document.getElementById('a2ui-container');
@@ -236,7 +245,7 @@ function openModal(item) {
     item.tabs.forEach(tab => {
         const div = document.createElement('div');
         div.className = 'tab-item';
-        div.innerHTML = `<img class="tab-icon" src="${tab.favIconUrl || 'icons/default.png'}"><div class="tab-title">${tab.title}</div>`;
+        div.innerHTML = `${getSafeIconHtml(tab.favIconUrl)}<div class="tab-title">${tab.title}</div>`;
         div.onclick = () => { chrome.tabs.update(tab.tabId, { active: true }); chrome.windows.update(tab.windowId, { focused: true }); };
         list.appendChild(div);
     });
@@ -326,7 +335,7 @@ document.getElementById('custom-select-btn')?.addEventListener('click', async ()
             item.style.cssText = "display: flex; align-items: center; gap: 0.8rem; padding: 0.8rem; background: rgba(15, 23, 42, 0.5); border-radius: 0.6rem; cursor: pointer; border: 1px solid transparent; transition: all 0.2s;";
             item.innerHTML = `
                 <input type="checkbox" data-idx="${idx}" style="width: 18px; height: 18px; accent-color: #38bdf8;">
-                <img src="${tab.favIconUrl || 'icons/default.png'}" style="width: 16px; height: 16px;">
+                ${getSafeIconHtml(tab.favIconUrl).replace('tab-icon', '').replace('class=""', 'style="width: 16px; height: 16px;"')}
                 <span style="color: #e2e8f0; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${tab.title}</span>
             `;
             item.onmouseover = () => item.style.borderColor = '#334155';
