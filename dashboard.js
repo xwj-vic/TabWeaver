@@ -46,7 +46,23 @@ function sanitizeMermaidCode(code) {
         .replace(/\[([^\]"]+[<>:;]+[^\]]*)\]/g, '["$1"]')
         // 7. 移除不支持的 style 属性
         .replace(/:::[\w-]+/g, '')
-        // 8. 清理多余空行
+        // 8. 修复关键字粘连问题：确保 Mermaid 关键字前有换行
+        // 8a. 在图表方向声明后强制换行 (graph TD/TB/LR/RL/BT 后紧跟内容)
+        .replace(/(graph\s*(?:TD|TB|BT|LR|RL)|flowchart\s*(?:TD|TB|BT|LR|RL))([^\s\n])/gi, '$1\n    $2')
+        // 8b. 在 subgraph 关键字前强制换行（处理空格分隔的情况，如 "B subgraph" -> "B\n    subgraph"）
+        .replace(/(\S)\s+(subgraph\s+)/gi, '$1\n    $2')
+        .replace(/([^\n])(subgraph\s+)/gi, '$1\n    $2')
+        // 8c. 在 end 关键字前强制换行（确保 end 独立成行）
+        .replace(/(\S)\s+(end)(\s|$)/gim, '$1\n$2$3')
+        .replace(/([^\n\s])\s*(end)(\s|$)/gi, '$1\n$2$3')
+        // 8d. 修复箭头与节点粘连 (A-->B 变成 A --> B)
+        .replace(/(\w)(-->|---)([\w\[])/g, '$1 $2 $3')
+        // 8e. 修复节点标识符中的下划线和中文粘连问题 (如 F_作为工具) - 将此类节点用引号包裹
+        .replace(/([A-Za-z0-9_]+_[\u4e00-\u9fa5]+)/g, '"$1"')
+        .replace(/([\u4e00-\u9fa5]+_[A-Za-z0-9_]+)/g, '"$1"')
+        // 8f. 修复箭头文本标签中的中文字符 (--> |标签| 格式的标签应该用引号)
+        .replace(/-->\s*\|([^|]*[\u4e00-\u9fa5][^|]*)\|/g, '--> |"$1"|')
+        // 9. 清理多余空行
         .replace(/\n{3,}/g, '\n\n');
 
     // 确保有正确的图表类型声明
@@ -249,8 +265,26 @@ flowchart TD
 重要规则：
 1. 每个页面必须有独立的内容流图
 2. 所有 Mermaid 代码必须用 \`\`\`mermaid 和 \`\`\` 包裹
-3. 节点文本不要使用特殊字符如 < > : ; 等
-4. 使用简洁的节点标签
+
+**Mermaid 语法强制规范（必须严格遵守）**：
+- 节点 ID 只能使用英文字母和数字（如 A, B1, nodeA），禁止使用中文或下划线
+- 中文标签必须用方括号包裹，如：A[用户需求] --> B[系统设计]
+- 每个语句必须独立成行，禁止将多条语句写在一行
+- subgraph 必须独立成行，格式：subgraph 标题名
+- 箭头格式：A --> B 或 A --> |标签| B
+- 禁止在节点 ID 中使用 : ; < > 等特殊字符
+- 图表类型声明后必须换行
+
+正确示例：
+\`\`\`mermaid
+flowchart TD
+    A[起点] --> B[处理]
+    B --> C[结果]
+    subgraph 子流程
+        D[步骤1] --> E[步骤2]
+    end
+\`\`\`
+
 
 内容：
 ` + item.tabs.map(t => `---\n【${t.title}】\n${t.content}`).join('\n\n');
@@ -297,7 +331,7 @@ async function renderRichContent(container, rawText, mermaidBlocks, tabs) {
 
     // 渲染开头部分（如果有）
     if (pageSections[0] && pageSections[0].trim()) {
-        const headerPart = pageSections[0].replace(/##\s*1\.\s*页面详解\s*/gi, '').trim();
+        const headerPart = pageSections[0].replace(/##\s*1\.\s*(页面详解|深度内容总结.*?)\s*/gi, '').trim();
         if (headerPart) {
             const headerDiv = document.createElement('div');
             headerDiv.innerHTML = markToHtml(headerPart);
@@ -344,9 +378,12 @@ async function renderRichContent(container, rawText, mermaidBlocks, tabs) {
         placeholders.forEach(p => {
             textContent = textContent.replace(p, '');
         });
-        // 清理多余的"内容流图"标题
-        textContent = textContent.replace(/\*\*内容流图\*\*[：:]\s*/gi, '');
-        textContent = textContent.replace(/---\s*$/g, '');
+        // 清理多余的"内容流向图"标题（兼容新旧 Prompt）
+        textContent = textContent.replace(/\*\*(🗺️\s*)?内容流(向)?图\*\*[：:]?\s*/gi, '')
+            // 清理所有残留的 markdown 分隔线
+            .replace(/^\s*---+\s*$/gm, '')
+            .replace(/---+\s*$/g, '')
+            .replace(/^\s*---+\s*/g, '');
 
         textPart.innerHTML = markToHtml('### 📄 ' + textContent.trim());
         card.appendChild(textPart);
@@ -382,9 +419,9 @@ async function renderRichContent(container, rawText, mermaidBlocks, tabs) {
         container.appendChild(card);
     }
 
-    // 渲染总体关系图
-    const relationSection = processedText.match(/##\s*2\.\s*总体关系图[\s\S]*?(?=##\s*3\.|$)/i);
-    if (relationSection || mermaidIndex < mermaidBlocks.length) {
+    // 渲染总体关系图（兼容新旧标题）- 只有在有未渲染的 Mermaid 块时才显示
+    const hasRemainingMermaid = mermaidIndex < mermaidBlocks.length;
+    if (hasRemainingMermaid) {
         const relationTitle = document.createElement('h2');
         relationTitle.style.cssText = "color: #818cf8; margin: 2rem 0 1rem 0; font-size: 1.2rem;";
         relationTitle.textContent = "🔗 总体关系图";
@@ -401,17 +438,12 @@ async function renderRichContent(container, rawText, mermaidBlocks, tabs) {
         `;
         container.appendChild(relationContainer);
 
-        // 使用最后一个未渲染的 mermaid 块作为关系图
-        if (mermaidIndex < mermaidBlocks.length) {
-            setTimeout(() => safeMermaidRender(relationContainer, mermaidBlocks[mermaidIndex]), 100);
-        } else if (mermaidBlocks.length > 0) {
-            // 如果所有块都用完了，用最后一个
-            setTimeout(() => safeMermaidRender(relationContainer, mermaidBlocks[mermaidBlocks.length - 1]), 100);
-        }
+        // 使用下一个未渲染的 mermaid 块作为关系图
+        setTimeout(() => safeMermaidRender(relationContainer, mermaidBlocks[mermaidIndex]), 100);
     }
 
-    // 渲染综合分析
-    const analysisSection = processedText.match(/##\s*3\.\s*综合分析[\s\S]*/i);
+    // 渲染综合分析（兼容新旧标题）
+    const analysisSection = processedText.match(/##\s*3\.\s*(综合分析|综合多维分析)[\s\S]*/i);
     if (analysisSection) {
         let analysisText = analysisSection[0];
         // 清理占位符
