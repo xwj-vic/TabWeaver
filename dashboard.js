@@ -15,6 +15,120 @@ function getSafeIconHtml(iconUrl, className = 'tab-icon') {
     return `<img class="${className}" src="${src}" onerror="this.onerror=null;this.src='${DEFAULT_ICON}'">`;
 }
 
+// ========== Mermaid 安全渲染模块 ==========
+
+/**
+ * 深度清理 Mermaid 代码，修复常见语法问题
+ */
+function sanitizeMermaidCode(code) {
+    if (!code) return '';
+
+    let cleaned = code
+        // 1. 中文标点转换
+        .replace(/（/g, '(').replace(/）/g, ')')
+        .replace(/【/g, '[').replace(/】/g, ']')
+        .replace(/：/g, ':').replace(/；/g, ';')
+        .replace(/，/g, ',').replace(/。/g, '.')
+        .replace(/"/g, '"').replace(/"/g, '"')
+        .replace(/'/g, "'").replace(/'/g, "'")
+        // 2. 移除 HTML 和特殊字符
+        .replace(/<br\s*\/?>/gi, ' ')
+        .replace(/&[a-z]+;/gi, ' ')
+        .replace(/\.\.\./g, '...')
+        // 3. 修复长横线问题
+        .replace(/-{3,}/g, '--')
+        .replace(/—/g, '--')
+        // 4. 移除纯装饰线条行
+        .replace(/^\s*--+\s*$/gm, '')
+        // 5. 移除空 subgraph
+        .replace(/subgraph\s+"[^"]*"\s*\n\s*end/gm, '')
+        // 6. 确保节点标签安全 - 给含特殊字符的节点加引号
+        .replace(/\[([^\]"]+[<>:;]+[^\]]*)\]/g, '["$1"]')
+        // 7. 移除不支持的 style 属性
+        .replace(/:::[\w-]+/g, '')
+        // 8. 清理多余空行
+        .replace(/\n{3,}/g, '\n\n');
+
+    // 确保有正确的图表类型声明
+    const hasType = /^(graph|flowchart|mindmap|sequenceDiagram|classDiagram|stateDiagram|erDiagram|pie)/im.test(cleaned);
+    if (!hasType) {
+        cleaned = 'graph TD\n' + cleaned;
+    }
+
+    return cleaned.trim();
+}
+
+/**
+ * 安全渲染 Mermaid 图表，带重试和降级机制
+ * @param {HTMLElement} container - 渲染容器
+ * @param {string} code - Mermaid 代码
+ * @param {number} maxRetries - 最大重试次数
+ */
+async function safeMermaidRender(container, code, maxRetries = 3) {
+    const cleanedCode = sanitizeMermaidCode(code);
+    container.textContent = cleanedCode;
+    container.classList.add('mermaid');
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            // 等待 DOM 更新
+            await new Promise(r => requestAnimationFrame(() => setTimeout(r, 50)));
+
+            // 尝试渲染
+            await mermaid.run({ nodes: [container] });
+            console.log(`Mermaid 渲染成功 (尝试 ${attempt})`);
+            return true;
+        } catch (error) {
+            console.warn(`Mermaid 渲染失败 (尝试 ${attempt}/${maxRetries}):`, error.message);
+
+            if (attempt < maxRetries) {
+                // 每次重试前额外清理
+                container.innerHTML = '';
+                const furtherCleaned = cleanedCode
+                    .replace(/\([^)]*\)/g, '')  // 移除所有括号内容
+                    .replace(/["']/g, '');       // 移除引号
+                container.textContent = furtherCleaned;
+                await new Promise(r => setTimeout(r, 100));
+            }
+        }
+    }
+
+    // 全部失败：降级显示
+    showMermaidFallback(container, cleanedCode);
+    return false;
+}
+
+/**
+ * 降级展示：显示代码块 + 重试按钮
+ */
+function showMermaidFallback(container, code) {
+    container.classList.remove('mermaid');
+    container.innerHTML = `
+        <div style="background: #1e293b; border-radius: 0.5rem; padding: 1rem; border: 1px solid #ef4444;">
+            <div style="color: #f87171; font-size: 0.85rem; margin-bottom: 0.5rem;">⚠️ 图表渲染失败</div>
+            <pre style="color: #94a3b8; font-size: 0.75rem; overflow-x: auto; margin: 0; white-space: pre-wrap;">${escapeHtml(code)}</pre>
+            <button onclick="retryMermaidRender(this.parentElement.parentElement, \`${escapeForJs(code)}\`)" 
+                    style="margin-top: 0.8rem; background: #334155; border: none; color: #94a3b8; padding: 0.4rem 0.8rem; border-radius: 0.4rem; cursor: pointer; font-size: 0.8rem;">
+                🔄 重新渲染
+            </button>
+        </div>
+    `;
+}
+
+function escapeHtml(text) {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escapeForJs(text) {
+    return text.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+}
+
+// 全局重试函数
+window.retryMermaidRender = async function (container, code) {
+    container.innerHTML = '<div style="color: #38bdf8;">重新渲染中...</div>';
+    await safeMermaidRender(container, code, 2);
+};
+
 async function initDashboard() {
     const statusBar = document.getElementById('status-bar');
     const container = document.getElementById('a2ui-container');
@@ -91,26 +205,45 @@ async function performDeepSynthesis(item, modalBody) {
     synthesisDiv.innerHTML = '<div class="loading" style="font-size: 0.8rem;">AI 正在绘制图谱与合成知识流...</div>';
 
     try {
-        const prompt = `你是一个知识整合专家。请根据以下网页内容进行深度整合。
+        // 新 Prompt：要求每页生成内容流图 + 总体关系图
+        const prompt = `你是一个知识整合专家。请根据以下网页内容进行深度整合，并绘制可视化图谱。
 
 输出结构：
 
-## 1. 页面总结
-对每个页面分别总结，格式：
-**[页面标题]**
-- 核心观点：（页面要表达的主要论点或目的）
-- 关键信息：（重要数据、事实、引用）
-- 主要结论：（页面的结论或建议）
+## 1. 页面详解
+对每个页面分别分析，格式如下（严格按此格式，每页都需要）：
 
-## 2. 关系图
-使用 \`\`\`mermaid 代码块，绘制页面间的概念关系（可以是 graph TD、mindmap 或 flowchart）。
+### 📄 [页面标题]
 
-## 3. 深度对比
-- 相同点：各页面的共识
-- 差异点：各页面的不同观点或侧重
-- 综合洞见：整合后的核心结论
+**核心观点**：（一句话概括主旨）
 
-重要：Mermaid 代码必须严格包裹在 \`\`\`mermaid 和 \`\`\` 之间。
+**关键信息**：
+- 要点1
+- 要点2
+- 要点3
+
+**内容流图**：
+\`\`\`mermaid
+flowchart LR
+    A[起点] --> B[关键步骤]
+    B --> C[结论]
+\`\`\`
+
+---
+
+## 2. 总体关系图
+使用 \`\`\`mermaid 绘制所有页面之间的概念关系图（graph TD 或 mindmap）。
+
+## 3. 综合分析
+- **共同主题**：各页面的共识
+- **差异对比**：不同观点或侧重
+- **核心洞见**：整合后的结论
+
+重要规则：
+1. 每个页面必须有独立的内容流图
+2. 所有 Mermaid 代码必须用 \`\`\`mermaid 和 \`\`\` 包裹
+3. 节点文本不要使用特殊字符如 < > : ; 等
+4. 使用简洁的节点标签
 
 内容：
 ` + item.tabs.map(t => `---\n【${t.title}】\n${t.content}`).join('\n\n');
@@ -118,102 +251,177 @@ async function performDeepSynthesis(item, modalBody) {
         const result = await callAIChat(prompt, apiConfig);
         console.log("AI Result:", result);
 
-        // --- 图表识别 ---
-        let graphDef = "";
-        const fenceMatch = result.match(/```mermaid([\s\S]*?)```/);
-        if (fenceMatch) {
-            graphDef = fenceMatch[1].trim();
-        } else {
-            const fuzzyMatch = result.match(/((?:mindmap|graph\s+(?:TD|LR|TB|BT|RL)|flowchart\s+(?:TD|LR|TB|BT|RL)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|pie)[\s\S]*?)(?=\n\n|\n##|\n\*\*|$)/i);
-            if (fuzzyMatch) graphDef = fuzzyMatch[1].trim();
+        // 解析所有 Mermaid 代码块
+        const mermaidBlocks = [];
+        const mermaidRegex = /```mermaid\s*([\s\S]*?)```/g;
+        let match;
+        while ((match = mermaidRegex.exec(result)) !== null) {
+            mermaidBlocks.push(match[1].trim());
         }
+        console.log(`Found ${mermaidBlocks.length} mermaid blocks`);
 
-        console.log("Extracted graph:", graphDef ? "Found" : "None");
-
-        // 清理 Mermaid 代码中的非法字符
-        if (graphDef) {
-            graphDef = graphDef
-                .replace(/（/g, '(').replace(/）/g, ')')  // 中文括号
-                .replace(/【/g, '[').replace(/】/g, ']')  // 中文方括号
-                .replace(/：/g, ':').replace(/；/g, ';')  // 中文冒号分号
-                .replace(/，/g, ',')                       // 中文逗号
-                .replace(/-{3,}/g, '--')                   // 解决 AI 生成长横线导致的语法错误
-                .replace(/^\s*--+.*$/gm, '')               // 移除纯线条行
-                .replace(/<br\s*\/?>/gi, ' ')              // 移除 <br/> 标签
-                .replace(/&[a-z]+;/gi, ' ')                // 移除 HTML 实体
-                .replace(/\.\.\./g, '')                    // 移除省略号
-                .replace(/subgraph\s+"[^"]*"\s*\n\s*\w+\s*\n\s*end/gm, '') // 移除只有单个节点的 subgraph
-        }
-
-        // 清理文本：移除图表代码，用占位符替换
-        let textToShow = result;
-        if (fenceMatch) {
-            textToShow = result.replace(fenceMatch[0], '[GRAPH_HERE]');
-        } else if (graphDef) {
-            textToShow = result.replace(graphDef, '[GRAPH_HERE]');
-        }
-
-        // 清理所有"关系图"相关标题（因为我们会手动添加）
-        textToShow = textToShow.replace(/##\s*2\.?\s*关系图[^\n]*/gi, '');
-        textToShow = textToShow.replace(/\*\*2\.?\s*关系图[^\n]*\*\*/gi, '');
-        textToShow = textToShow.replace(/^2\.?\s*关系图[^\n]*/gim, '');
-
-        // 容器清空
+        // 清空容器
         synthesisDiv.innerHTML = '';
 
-        // 渲染逻辑：图表放在"关系图"标题位置
-        if (graphDef && textToShow.includes('[GRAPH_HERE]')) {
-            const parts = textToShow.split('[GRAPH_HERE]');
-
-            // 第一部分：页面总结
-            const part1Div = document.createElement('div');
-            part1Div.style.cssText = "color: #cbd5e1; line-height: 1.8; font-size: 0.95rem;";
-            part1Div.innerHTML = markToHtml(parts[0]);
-            synthesisDiv.appendChild(part1Div);
-
-            // 关系图标题
-            const chartTitle = document.createElement('h3');
-            chartTitle.style.cssText = "color: #818cf8; margin: 1.5rem 0 1rem 0;";
-            chartTitle.textContent = "2. 关系图";
-            synthesisDiv.appendChild(chartTitle);
-
-            // 图表容器
-            const chartContainer = document.createElement('div');
-            chartContainer.id = 'mermaid-chart-' + Date.now();
-            chartContainer.className = 'mermaid';
-            chartContainer.style.cssText = "background: #0f172a; padding: 1.5rem; border-radius: 1rem; margin-bottom: 1.5rem; border: 1px solid #334155; overflow-x: auto;";
-            chartContainer.textContent = graphDef;
-            synthesisDiv.appendChild(chartContainer);
-
-            // 第二部分：深度对比
-            if (parts[1] && parts[1].trim()) {
-                const part2Div = document.createElement('div');
-                part2Div.style.cssText = "color: #cbd5e1; line-height: 1.8; font-size: 0.95rem;";
-                part2Div.innerHTML = markToHtml(parts[1]);
-                synthesisDiv.appendChild(part2Div);
-            }
-
-            // 异步渲染图表
-            requestAnimationFrame(async () => {
-                try {
-                    await mermaid.run({ nodes: [chartContainer] });
-                    console.log("Mermaid rendered successfully");
-                } catch (e) {
-                    console.error("Mermaid render error:", e);
-                    chartContainer.innerHTML = `<pre style="color: #ef4444; font-size: 0.8rem;">图表渲染失败</pre>`;
-                }
-            });
-        } else {
-            // 没有图表或占位符：直接渲染全部文本
-            const textDiv = document.createElement('div');
-            textDiv.style.cssText = "color: #cbd5e1; line-height: 1.8; font-size: 0.95rem;";
-            textDiv.innerHTML = markToHtml(textToShow.replace('[GRAPH_HERE]', ''));
-            synthesisDiv.appendChild(textDiv);
-        }
+        // 创建图文并茂的渲染
+        await renderRichContent(synthesisDiv, result, mermaidBlocks, item.tabs);
 
     } catch (err) {
         console.error("Synthesis error:", err);
         synthesisDiv.innerHTML = `<div style="color: #ef4444;">合成失败: ${err.message}</div>`;
+    }
+}
+
+/**
+ * 图文并茂渲染：将文本和图谱交织展示
+ */
+async function renderRichContent(container, rawText, mermaidBlocks, tabs) {
+    // 替换 mermaid 代码块为占位符
+    let processedText = rawText;
+    const placeholders = [];
+    mermaidBlocks.forEach((block, i) => {
+        const placeholder = `[MERMAID_BLOCK_${i}]`;
+        placeholders.push(placeholder);
+        processedText = processedText.replace(/```mermaid\s*[\s\S]*?```/, placeholder);
+    });
+
+    // 按页面分割内容
+    const pageSections = processedText.split(/###\s*📄\s*/);
+
+    // 渲染开头部分（如果有）
+    if (pageSections[0] && pageSections[0].trim()) {
+        const headerPart = pageSections[0].replace(/##\s*1\.\s*页面详解\s*/gi, '').trim();
+        if (headerPart) {
+            const headerDiv = document.createElement('div');
+            headerDiv.innerHTML = markToHtml(headerPart);
+            container.appendChild(headerDiv);
+        }
+    }
+
+    // 页面详解标题
+    const sectionTitle = document.createElement('h2');
+    sectionTitle.style.cssText = "color: #818cf8; margin: 1.5rem 0 1rem 0; font-size: 1.2rem;";
+    sectionTitle.textContent = "📑 页面详解";
+    container.appendChild(sectionTitle);
+
+    // 渲染每个页面卡片
+    let mermaidIndex = 0;
+    for (let i = 1; i < pageSections.length; i++) {
+        const section = pageSections[i];
+        if (!section.trim()) continue;
+
+        // 创建图文并茂卡片
+        const card = document.createElement('div');
+        card.className = 'page-flow-card';
+        card.style.cssText = `
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9));
+            border-radius: 1rem;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid #334155;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        `;
+
+        // 检查此部分是否包含 Mermaid 占位符
+        const hasMermaid = placeholders.some(p => section.includes(p));
+
+        // 左侧：文字内容
+        const textPart = document.createElement('div');
+        textPart.style.cssText = "color: #cbd5e1; line-height: 1.8; font-size: 0.9rem;";
+
+        let textContent = section;
+        // 移除 mermaid 占位符用于文字显示
+        placeholders.forEach(p => {
+            textContent = textContent.replace(p, '');
+        });
+        // 清理多余的"内容流图"标题
+        textContent = textContent.replace(/\*\*内容流图\*\*[：:]\s*/gi, '');
+        textContent = textContent.replace(/---\s*$/g, '');
+
+        textPart.innerHTML = markToHtml('### 📄 ' + textContent.trim());
+        card.appendChild(textPart);
+
+        // 右侧：流程图
+        const chartPart = document.createElement('div');
+        chartPart.style.cssText = `
+            background: #0f172a;
+            border-radius: 0.8rem;
+            padding: 1rem;
+            border: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 150px;
+        `;
+
+        if (hasMermaid && mermaidIndex < mermaidBlocks.length) {
+            const chartContainer = document.createElement('div');
+            chartContainer.id = 'page-flow-' + Date.now() + '-' + i;
+            chartContainer.style.cssText = "width: 100%;";
+            chartPart.appendChild(chartContainer);
+
+            // 延迟渲染以确保 DOM 就绪
+            const blockToRender = mermaidBlocks[mermaidIndex];
+            mermaidIndex++;
+            setTimeout(() => safeMermaidRender(chartContainer, blockToRender), 100 * i);
+        } else {
+            chartPart.innerHTML = '<div style="color: #64748b; font-size: 0.85rem;">暂无流程图</div>';
+        }
+
+        card.appendChild(chartPart);
+        container.appendChild(card);
+    }
+
+    // 渲染总体关系图
+    const relationSection = processedText.match(/##\s*2\.\s*总体关系图[\s\S]*?(?=##\s*3\.|$)/i);
+    if (relationSection || mermaidIndex < mermaidBlocks.length) {
+        const relationTitle = document.createElement('h2');
+        relationTitle.style.cssText = "color: #818cf8; margin: 2rem 0 1rem 0; font-size: 1.2rem;";
+        relationTitle.textContent = "🔗 总体关系图";
+        container.appendChild(relationTitle);
+
+        const relationContainer = document.createElement('div');
+        relationContainer.id = 'relation-chart-' + Date.now();
+        relationContainer.style.cssText = `
+            background: #0f172a;
+            padding: 1.5rem;
+            border-radius: 1rem;
+            border: 1px solid #334155;
+            margin-bottom: 1.5rem;
+        `;
+        container.appendChild(relationContainer);
+
+        // 使用最后一个未渲染的 mermaid 块作为关系图
+        if (mermaidIndex < mermaidBlocks.length) {
+            setTimeout(() => safeMermaidRender(relationContainer, mermaidBlocks[mermaidIndex]), 100);
+        } else if (mermaidBlocks.length > 0) {
+            // 如果所有块都用完了，用最后一个
+            setTimeout(() => safeMermaidRender(relationContainer, mermaidBlocks[mermaidBlocks.length - 1]), 100);
+        }
+    }
+
+    // 渲染综合分析
+    const analysisSection = processedText.match(/##\s*3\.\s*综合分析[\s\S]*/i);
+    if (analysisSection) {
+        let analysisText = analysisSection[0];
+        // 清理占位符
+        placeholders.forEach(p => {
+            analysisText = analysisText.replace(p, '');
+        });
+
+        const analysisDiv = document.createElement('div');
+        analysisDiv.style.cssText = `
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.1), rgba(129, 140, 248, 0.1));
+            border-radius: 1rem;
+            padding: 1.5rem;
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            margin-top: 1rem;
+        `;
+        analysisDiv.innerHTML = markToHtml(analysisText);
+        container.appendChild(analysisDiv);
     }
 }
 
@@ -313,8 +521,27 @@ function loadConfig() {
 }
 
 document.getElementById('refresh-btn')?.addEventListener('click', () => initDashboard());
-document.querySelector('.close-modal').onclick = () => document.getElementById('modal-overlay').style.display = 'none';
+document.querySelector('.close-modal').onclick = () => {
+    document.getElementById('modal-overlay').style.display = 'none';
+    // 关闭时重置全屏状态
+    document.getElementById('modal-content').classList.remove('fullscreen');
+    updateFullscreenIcon();
+};
 document.addEventListener('DOMContentLoaded', initDashboard);
+
+// ========== 弹窗全屏切换 ==========
+function updateFullscreenIcon() {
+    const btn = document.getElementById('toggle-fullscreen-btn');
+    const isFullscreen = document.getElementById('modal-content').classList.contains('fullscreen');
+    btn.textContent = isFullscreen ? '⛶' : '⛶';  // 可换成不同图标
+    btn.title = isFullscreen ? '还原窗口' : '全屏显示';
+}
+
+document.getElementById('toggle-fullscreen-btn')?.addEventListener('click', () => {
+    const modal = document.getElementById('modal-content');
+    modal.classList.toggle('fullscreen');
+    updateFullscreenIcon();
+});
 
 // ========== 自定义选择功能 ==========
 let allAvailableTabs = [];
