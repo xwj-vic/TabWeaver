@@ -26,4 +26,4 @@ chrome.tabs.onUpdated.addListener(broadcastTabUpdate);
 chrome.tabs.onCreated.addListener(broadcastTabUpdate);
 chrome.tabs.onRemoved.addListener(broadcastTabUpdate);
 
-console.log("FlowTab Background Service Worker Initialized.");
+console.log("TabWeaver Background Service Worker Initialized.");

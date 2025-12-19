@@ -1,5 +1,5 @@
 /**
- * FlowTab Dashboard Logic (v0.3.3)
+ * TabWeaver Dashboard Logic (v0.3.3)
  * 优化：图表布局调整，放置在正确位置
  */
 
@@ -607,24 +607,41 @@ function renderExtractedSummary(data) {
 
 function saveConfig() {
     const config = { endpoint: document.getElementById('api-endpoint').value, model: document.getElementById('api-model').value, key: document.getElementById('api-key').value };
-    localStorage.setItem('flowtab_config', JSON.stringify(config));
+    localStorage.setItem('tabweaver_config', JSON.stringify(config));
     return config;
 }
 
 function loadConfig() {
-    const config = JSON.parse(localStorage.getItem('flowtab_config') || '{}');
+    const config = JSON.parse(localStorage.getItem('tabweaver_config') || '{}');
     if (config.endpoint) document.getElementById('api-endpoint').value = config.endpoint;
     if (config.model) document.getElementById('api-model').value = config.model;
     if (config.key) document.getElementById('api-key').value = config.key;
 }
 
-document.getElementById('refresh-btn')?.addEventListener('click', () => initDashboard());
-document.querySelector('.close-modal').onclick = () => {
+// 关闭详情弹窗函数
+function closeDetailModal() {
     document.getElementById('modal-overlay').style.display = 'none';
-    // 关闭时重置全屏状态
     document.getElementById('modal-content').classList.remove('fullscreen');
     updateFullscreenIcon();
-};
+}
+
+document.getElementById('refresh-btn')?.addEventListener('click', () => initDashboard());
+document.querySelector('.close-modal').onclick = closeDetailModal;
+
+// 点击蒙层关闭弹窗 (详情弹窗)
+document.getElementById('modal-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay') {
+        closeDetailModal();
+    }
+});
+
+// 点击蒙层关闭弹窗 (标签页选择弹窗)
+document.getElementById('tab-select-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'tab-select-overlay') {
+        document.getElementById('tab-select-overlay').style.display = 'none';
+    }
+});
+
 document.addEventListener('DOMContentLoaded', initDashboard);
 
 // ========== 弹窗全屏切换 ==========

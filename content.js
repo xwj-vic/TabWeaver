@@ -1,12 +1,12 @@
 /**
- * FlowTab Content Script
+ * TabWeaver Content Script
  * 负责在目标网页执行 Readability 提取
  */
 
 (function () {
     // 检查是否已经定义，防止重复执行
-    if (window.hasFlowTabExtractor) return;
-    window.hasFlowTabExtractor = true;
+    if (window.hasTabWeaverExtractor) return;
+    window.hasTabWeaverExtractor = true;
 
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (request.action === "extractContent") {

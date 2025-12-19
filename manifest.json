@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "FlowTab",
+  "name": "TabWeaver",
   "version": "0.1.0",
   "description": "基于 LLM 和 A2UI 的智能标签页整合看板",
   "permissions": [
@@ -10,7 +10,7 @@
     "scripting"
   ],
   "action": {
-    "default_title": "打开 FlowTab 看板"
+    "default_title": "打开 TabWeaver 看板"
   },
   "background": {
     "service_worker": "background.js"
