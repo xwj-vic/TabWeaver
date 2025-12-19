@@ -9,10 +9,25 @@ let apiConfig = {};
 // 默认图标 - 内联SVG，确保永不失效
 const DEFAULT_ICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2394a3b8'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z'/%3E%3C/svg%3E";
 
-// 安全设置图标：处理 favicon 加载失败
+// 安全设置图标：处理 favicon 加载失败（CSP 兼容）
 function getSafeIconHtml(iconUrl, className = 'tab-icon') {
     const src = iconUrl || DEFAULT_ICON;
-    return `<img class="${className}" src="${src}" onerror="this.onerror=null;this.src='${DEFAULT_ICON}'">`;
+    // 不使用内联 onerror，而是在创建元素后通过 JS 绑定
+    return `<img class="${className}" src="${src}" data-fallback="${DEFAULT_ICON}">`;
+}
+
+// 为所有图片添加错误处理（CSP 兼容）
+function attachImageFallbacks() {
+    document.querySelectorAll('img[data-fallback]').forEach(img => {
+        if (!img.dataset.fallbackAttached) {
+            img.dataset.fallbackAttached = 'true';
+            img.addEventListener('error', function () {
+                if (this.src !== this.dataset.fallback) {
+                    this.src = this.dataset.fallback;
+                }
+            });
+        }
+    });
 }
 
 // ========== Mermaid 安全渲染模块 ==========
@@ -115,20 +130,30 @@ async function safeMermaidRender(container, code, maxRetries = 3) {
 }
 
 /**
- * 降级展示：显示代码块 + 重试按钮
+ * 降级展示：显示代码块 + 重试按钮（CSP 兼容）
  */
 function showMermaidFallback(container, code) {
     container.classList.remove('mermaid');
-    container.innerHTML = `
-        <div style="background: #1e293b; border-radius: 0.5rem; padding: 1rem; border: 1px solid #ef4444;">
-            <div style="color: #f87171; font-size: 0.85rem; margin-bottom: 0.5rem;">⚠️ 图表渲染失败</div>
-            <pre style="color: #94a3b8; font-size: 0.75rem; overflow-x: auto; margin: 0; white-space: pre-wrap;">${escapeHtml(code)}</pre>
-            <button onclick="retryMermaidRender(this.parentElement.parentElement, \`${escapeForJs(code)}\`)" 
-                    style="margin-top: 0.8rem; background: #334155; border: none; color: #94a3b8; padding: 0.4rem 0.8rem; border-radius: 0.4rem; cursor: pointer; font-size: 0.8rem;">
-                🔄 重新渲染
-            </button>
-        </div>
+
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'background: #1e293b; border-radius: 0.5rem; padding: 1rem; border: 1px solid #ef4444;';
+
+    wrapper.innerHTML = `
+        <div style="color: #f87171; font-size: 0.85rem; margin-bottom: 0.5rem;">⚠️ 图表渲染失败</div>
+        <pre style="color: #94a3b8; font-size: 0.75rem; overflow-x: auto; margin: 0; white-space: pre-wrap;">${escapeHtml(code)}</pre>
     `;
+
+    const retryBtn = document.createElement('button');
+    retryBtn.textContent = '🔄 重新渲染';
+    retryBtn.style.cssText = 'margin-top: 0.8rem; background: #334155; border: none; color: #94a3b8; padding: 0.4rem 0.8rem; border-radius: 0.4rem; cursor: pointer; font-size: 0.8rem;';
+    retryBtn.addEventListener('click', () => {
+        container.innerHTML = '<div style="color: #38bdf8;">重新渲染中...</div>';
+        safeMermaidRender(container, code, 2);
+    });
+
+    wrapper.appendChild(retryBtn);
+    container.innerHTML = '';
+    container.appendChild(wrapper);
 }
 
 function escapeHtml(text) {
@@ -215,102 +240,111 @@ async function performRapidClustering(data, config) {
 
         const result = await callAIChat(prompt, config);
         const json = parseAIResponse(result);
-        if (json && json.groups) renderTopicCards(json.groups, data);
-    } catch (err) { renderExtractedSummary(data); }
+        if (json && json.groups && json.groups.length > 0) {
+            renderTopicCards(json.groups, data);
+            document.getElementById('status-bar').innerText = "聚类分析完成";
+        } else {
+            console.warn("AI clustering failed or empty, showing raw summary");
+            renderExtractedSummary(data);
+            document.getElementById('status-bar').innerText = "聚类解析失败，显示提取结果";
+        }
+    } catch (err) {
+        console.error("Clustering error:", err);
+        renderExtractedSummary(data);
+        document.getElementById('status-bar').innerText = "聚类失败: " + err.message;
+    }
 }
 
 async function performDeepSynthesis(item, modalBody) {
     const synthesisDiv = modalBody.querySelector('#deep-synthesis-content');
-    synthesisDiv.innerHTML = '<div class="loading" style="font-size: 0.8rem;">AI 正在绘制图谱与合成知识流...</div>';
+    synthesisDiv.innerHTML = '<div class="loading" style="font-size: 0.8rem;">AI 正在深度分析内容...</div>';
 
     try {
-        // 新 Prompt：要求每页生成内容流图 + 总体关系图
-        const prompt = `你是一个知识整合专家。请根据以下网页内容进行深度整合，并绘制可视化图谱。
+        // 纯文本深度总结 Prompt，无图表
+        const tabContents = item.tabs.map(t => `---\n【${t.title}】\n${t.content}`).join('\n\n');
+        const prompt = `你是一个知识整合专家。请根据以下网页内容进行深度分析和综合整合。
 
-输出结构：
+## 输出结构
 
-## 1. 深度内容总结 (Page Insight)
-请对每个页面进行深度且详细的内容拆解，严禁一句话带过。格式如下：
+### 第一部分：逐页深度总结
 
-### 📄 [页面标题]
+对每个页面进行**深度且详尽的内容拆解**，严禁一句话带过。每个页面必须包含以下内容：
+
+#### 📄 [页面标题]
 
 **🎯 核心主旨**：
-（精炼概括页面的中心思想）
+用 2-3 句话精准概括该页面想要传达的核心信息或解决的核心问题。
 
-**🔍 深度内容详述**：
-（详细描述页面的核心逻辑、论据或主要内容。要求涵盖其区别于其他页面的关键细节，字数需能体现深度。）
+**📌 重点内容提炼**：
+详细阐述页面的主体内容，包括但不限于：
+- 主要论点或核心观点
+- 关键论据、数据支撑或案例说明
+- 方法论、技术细节或实施路径
+- 与其他相关主题的关联性
 
-**💡 关键要点**：
-- [要点1]：详细说明
-- [要点2]：详细说明
-- [要点3]：详细说明
+**💡 关键要点（不少于 3 点）**：
+- **要点一**：[标题] - 详细说明该要点的含义和重要性
+- **要点二**：[标题] - 详细说明该要点的含义和重要性
+- **要点三**：[标题] - 详细说明该要点的含义和重要性
+（根据内容复杂度可增加更多要点）
 
-**🗺️ 内容流向图**：
-（使用 Mermaid 绘制反映其内部逻辑流动的图表）
-\`\`\`mermaid
-flowchart TD
-    ...逻辑节点...
-\`\`\`
+**⚠️ 特别注意**：
+指出该页面中容易被忽略但非常重要的信息，或需要谨慎对待的观点。
 
 ---
 
-## 2. 知识关联图谱 (Knowledge Graph)
-使用 \`\`\`mermaid 绘制一个能反映所有页面之间**逻辑联系、因果关系或知识架构**的复杂关系图。
+### 第二部分：综合多维分析
 
-## 3. 综合多维分析
-- **共识与基调**：这些页面的共同点和整体倾向背景。
-- **差异与冲突**：不同来源之间的侧重点差异、数据出入或观点对立。
-- **最终核心洞见**：基于所有输入内容，给出一个具备高度总结性和前瞻性的整合结论。
+基于以上所有页面的内容，进行跨页面的综合分析：
 
-重要规则：
-1. 每个页面必须有独立的内容流图
-2. 所有 Mermaid 代码必须用 \`\`\`mermaid 和 \`\`\` 包裹
+**🔗 共识与主线**：
+这些页面在哪些方面达成了共识？它们共同指向什么主题或趋势？
 
-**Mermaid 语法强制规范（必须严格遵守）**：
-- 节点 ID 只能使用英文字母和数字（如 A, B1, nodeA），禁止使用中文或下划线
-- 中文标签必须用方括号包裹，如：A[用户需求] --> B[系统设计]
-- 每个语句必须独立成行，禁止将多条语句写在一行
-- subgraph 必须独立成行，格式：subgraph 标题名
-- 箭头格式：A --> B 或 A --> |标签| B
-- 禁止在节点 ID 中使用 : ; < > 等特殊字符
-- 图表类型声明后必须换行
+**⚔️ 差异与张力**：
+不同页面之间存在哪些观点分歧、数据差异或方法论冲突？这些差异反映了什么？
 
-正确示例：
-\`\`\`mermaid
-flowchart TD
-    A[起点] --> B[处理]
-    B --> C[结果]
-    subgraph 子流程
-        D[步骤1] --> E[步骤2]
-    end
-\`\`\`
+**🎯 核心洞见**：
+综合所有信息后，提炼出最有价值的 2-3 条深度洞见，这些洞见应该是单独阅读任何一个页面都无法得出的。
 
+**💼 行动建议**：
+基于以上分析，给出具体可执行的建议或下一步行动方向。
+
+---
+
+## 重要规则
+1. **禁止敷衍**：每个页面的总结必须详尽，体现你对内容的深度理解
+2. **保持客观**：忠实于原文内容，避免过度解读
+3. **结构清晰**：严格按照上述格式输出
+4. **不需要生成任何图表或代码**
 
 内容：
-` + item.tabs.map(t => `---\n【${t.title}】\n${t.content}`).join('\n\n');
+${tabContents}`;
 
         const result = await callAIChat(prompt, apiConfig);
         console.log("AI Result:", result);
 
-        // 解析所有 Mermaid 代码块
-        const mermaidBlocks = [];
-        const mermaidRegex = /```mermaid\s*([\s\S]*?)```/g;
-        let match;
-        while ((match = mermaidRegex.exec(result)) !== null) {
-            mermaidBlocks.push(match[1].trim());
-        }
-        console.log(`Found ${mermaidBlocks.length} mermaid blocks`);
-
-        // 清空容器
+        // 清空容器并直接渲染纯文本结果
         synthesisDiv.innerHTML = '';
-
-        // 创建图文并茂的渲染
-        await renderRichContent(synthesisDiv, result, mermaidBlocks, item.tabs);
+        renderTextContent(synthesisDiv, result);
 
     } catch (err) {
         console.error("Synthesis error:", err);
-        synthesisDiv.innerHTML = `<div style="color: #ef4444;">合成失败: ${err.message}</div>`;
+        synthesisDiv.innerHTML = '<div style="color: #ef4444;">合成失败: ' + err.message + '</div>';
     }
+}
+
+/**
+ * 纯文本渲染：将 AI 输出的 Markdown 转换为 HTML
+ */
+function renderTextContent(container, text) {
+    // 将 Markdown 转换为 HTML 并渲染
+    const htmlContent = markToHtml(text);
+
+    const contentDiv = document.createElement('div');
+    contentDiv.style.cssText = 'color: #cbd5e1; line-height: 1.8; font-size: 0.95rem;';
+    contentDiv.innerHTML = htmlContent;
+
+    container.appendChild(contentDiv);
 }
 
 /**
@@ -323,7 +357,7 @@ async function renderRichContent(container, rawText, mermaidBlocks, tabs) {
     mermaidBlocks.forEach((block, i) => {
         const placeholder = `[MERMAID_BLOCK_${i}]`;
         placeholders.push(placeholder);
-        processedText = processedText.replace(/```mermaid\s*[\s\S]*?```/, placeholder);
+        processedText = processedText.replace(/```mermaid\s * [\s\S] *? ```/, placeholder);
     });
 
     // 按页面分割内容
@@ -356,14 +390,14 @@ async function renderRichContent(container, rawText, mermaidBlocks, tabs) {
         card.className = 'page-flow-card';
         card.style.cssText = `
             display: grid;
-            grid-template-columns: 1fr; /* 修改为纵向排列 */
-            gap: 1.5rem;
-            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9));
-            border-radius: 1rem;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
-            border: 1px solid #334155;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        grid - template - columns: 1fr; /* 修改为纵向排列 */
+        gap: 1.5rem;
+        background: linear - gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9));
+        border - radius: 1rem;
+        padding: 1.5rem;
+        margin - bottom: 1.5rem;
+        border: 1px solid #334155;
+        box - shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
         `;
 
         // 检查此部分是否包含 Mermaid 占位符
@@ -391,14 +425,14 @@ async function renderRichContent(container, rawText, mermaidBlocks, tabs) {
         // 右侧：流程图
         const chartPart = document.createElement('div');
         chartPart.style.cssText = `
-            background: #0f172a;
-            border-radius: 0.8rem;
-            padding: 1rem;
-            border: 1px solid #334155;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 150px;
+        background: #0f172a;
+        border - radius: 0.8rem;
+        padding: 1rem;
+        border: 1px solid #334155;
+        display: flex;
+        align - items: center;
+        justify - content: center;
+        min - height: 150px;
         `;
 
         if (hasMermaid && mermaidIndex < mermaidBlocks.length) {
@@ -430,11 +464,11 @@ async function renderRichContent(container, rawText, mermaidBlocks, tabs) {
         const relationContainer = document.createElement('div');
         relationContainer.id = 'relation-chart-' + Date.now();
         relationContainer.style.cssText = `
-            background: #0f172a;
-            padding: 1.5rem;
-            border-radius: 1rem;
-            border: 1px solid #334155;
-            margin-bottom: 1.5rem;
+        background: #0f172a;
+        padding: 1.5rem;
+        border - radius: 1rem;
+        border: 1px solid #334155;
+        margin - bottom: 1.5rem;
         `;
         container.appendChild(relationContainer);
 
@@ -453,11 +487,11 @@ async function renderRichContent(container, rawText, mermaidBlocks, tabs) {
 
         const analysisDiv = document.createElement('div');
         analysisDiv.style.cssText = `
-            background: linear-gradient(135deg, rgba(56, 189, 248, 0.1), rgba(129, 140, 248, 0.1));
-            border-radius: 1rem;
-            padding: 1.5rem;
-            border: 1px solid rgba(56, 189, 248, 0.2);
-            margin-top: 1rem;
+        background: linear - gradient(135deg, rgba(56, 189, 248, 0.1), rgba(129, 140, 248, 0.1));
+        border - radius: 1rem;
+        padding: 1.5rem;
+        border: 1px solid rgba(56, 189, 248, 0.2);
+        margin - top: 1rem;
         `;
         analysisDiv.innerHTML = markToHtml(analysisText);
         container.appendChild(analysisDiv);
@@ -492,10 +526,13 @@ function openModal(item) {
     item.tabs.forEach(tab => {
         const div = document.createElement('div');
         div.className = 'tab-item';
-        div.innerHTML = `${getSafeIconHtml(tab.favIconUrl)}<div class="tab-title">${tab.title}</div>`;
+        div.innerHTML = `${getSafeIconHtml(tab.favIconUrl)} <div class="tab-title">${tab.title}</div>`;
         div.onclick = () => { chrome.tabs.update(tab.tabId, { active: true }); chrome.windows.update(tab.windowId, { focused: true }); };
         list.appendChild(div);
     });
+
+    // 为图片添加错误处理（CSP 兼容）
+    attachImageFallbacks();
 
     body.querySelector('#close-tabs-btn').onclick = async () => {
         if (confirm("确定？")) {
@@ -529,7 +566,27 @@ async function callAIChat(prompt, config) {
 }
 
 function parseAIResponse(raw) {
-    try { return JSON.parse(raw.replace(/```json|```/g, '').trim()); } catch (e) { return null; }
+    if (!raw) return null;
+    try {
+        // 1. 尝试直接解析
+        return JSON.parse(raw);
+    } catch (e) {
+        try {
+            // 2. 尝试提取 ```json ... ``` 中的内容
+            const match = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (match) return JSON.parse(match[1].trim());
+
+            // 3. 尝试搜索第一个 { 和 最后一个 } 之间的内容
+            const start = raw.indexOf('{');
+            const end = raw.lastIndexOf('}');
+            if (start !== -1 && end !== -1) {
+                return JSON.parse(raw.substring(start, end + 1));
+            }
+        } catch (e2) {
+            console.error("JSON parse failed after extraction attempts:", e2);
+        }
+        return null;
+    }
 }
 
 function markToHtml(text) {
@@ -602,14 +659,15 @@ document.getElementById('custom-select-btn')?.addEventListener('click', async ()
             const item = document.createElement('label');
             item.style.cssText = "display: flex; align-items: center; gap: 0.8rem; padding: 0.8rem; background: rgba(15, 23, 42, 0.5); border-radius: 0.6rem; cursor: pointer; border: 1px solid transparent; transition: all 0.2s;";
             item.innerHTML = `
-                <input type="checkbox" data-idx="${idx}" style="width: 18px; height: 18px; accent-color: #38bdf8;">
-                ${getSafeIconHtml(tab.favIconUrl).replace('tab-icon', '').replace('class=""', 'style="width: 16px; height: 16px;"')}
-                <span style="color: #e2e8f0; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${tab.title}</span>
+            <input type="checkbox" data-idx="${idx}" style="width: 18px; height: 18px; accent-color: #38bdf8;">
+            ${getSafeIconHtml(tab.favIconUrl).replace('tab-icon', '').replace('class=""', 'style="width: 16px; height: 16px;"')}
+            <span style="color: #e2e8f0; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${tab.title}</span>
             `;
             item.onmouseover = () => item.style.borderColor = '#334155';
             item.onmouseout = () => item.style.borderColor = 'transparent';
             container.appendChild(item);
         });
+        attachImageFallbacks();
     } catch (err) {
         container.innerHTML = `<div style="color: #ef4444;">加载失败: ${err.message}</div>`;
     }
@@ -664,7 +722,7 @@ async function synthesizeSelectedTabs(tabs) {
                     result.shortContent = (result.content || "").substring(0, 600); // 增加摘要长度以提高分类准确度
                     currentExtractedData.push(result);
                 }
-            } catch (e) { console.warn(`Tab ${tab.id} skip:`, e); }
+            } catch (e) { console.warn(`Tab ${tab.id} skip: `, e); }
         }
 
         apiConfig = saveConfig();
@@ -672,7 +730,7 @@ async function synthesizeSelectedTabs(tabs) {
             // 自定义选择：直接打开合成弹窗，跳过聚类
             statusBar.innerText = "正在合成...";
             openModal({
-                title: `自定义合成 (${currentExtractedData.length} 个页面)`,
+                title: `自定义合成(${currentExtractedData.length} 个页面)`,
                 tabs: currentExtractedData
             });
         } else if (!apiConfig.key) {
